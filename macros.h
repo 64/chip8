@@ -8,6 +8,7 @@
 #define WINDOW_HEIGHT 320
 #define WINDOW_WIDTH 640
 #define NUM_REGS 16
+#define FONTSET_SIZE 80
 
 
 #ifdef NDEBUG
