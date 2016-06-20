@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include "macros.h"
 
-//gcc -I/usr/local/include/SDL2 -D_THREAD_SAFE -L/usr/local/lib -lSDL2 chip8.c -o chip8 && ./chip8
-//gcc chip8.c -o chip8 -I/usr/include/SDL2 -D_REENTRANT -L/usr/lib/x86_64-linux-gnu -lSDL2 && ./chip8
+//OSX: gcc -I/usr/local/include/SDL2 -D_THREAD_SAFE -L/usr/local/lib -lSDL2 chip8.c -o chip8 && ./chip8
+//LINUX: gcc chip8.c -o chip8 -I/usr/include/SDL2 -D_REENTRANT -L/usr/lib/x86_64-linux-gnu -lSDL2 && ./chip8
 
 SDL_Window *window;
 SDL_Renderer *renderer;
@@ -43,11 +43,15 @@ int main(int argc, char *argv[]) {
     log_info("Graphics successfully initialised.");
 
     chip8_initmem();
+    draw_flag = 1;
     running = 1;
-
+    gfx[0] = 1;
+    gfx[64] = 1;
+    gfx[2047] = 1;
     while(running) {
         input_loop();
         chip8_cycle();
+        chip8_draw();
     }
 
     if (!destroy_graphics()) {
@@ -93,7 +97,24 @@ void input_loop() {
 }
 
 void chip8_draw() {
+    if (draw_flag != 1)
+        return;
 
+    SDL_RenderClear(renderer);
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+    // Loop through each gfx, update pixel on screen
+    int i;
+    SDL_Rect r = { 0, 0, TILE_WIDTH, TILE_HEIGHT };
+    for (i = 0; i < GFX_MAX; i++) {
+        if (gfx[i] != 1)
+            continue;
+        log_info("Read 1 value");
+        r.x = (i * 10) % WINDOW_WIDTH;
+        r.y = (i / (WINDOW_WIDTH / 10)) * 10;
+        SDL_RenderFillRect(renderer, &r);
+    }
+    SDL_RenderPresent(renderer);
+    draw_flag = 0;
 }
 
 int destroy_graphics() {

@@ -9,6 +9,9 @@
 #define WINDOW_WIDTH 640
 #define NUM_REGS 16
 #define FONTSET_SIZE 80
+#define GFX_MAX (64 * 32)
+#define TILE_WIDTH 10
+#define TILE_HEIGHT 10
 
 
 #ifdef NDEBUG
