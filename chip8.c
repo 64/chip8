@@ -37,6 +37,7 @@ void chip8_initmem();
 void chip8_runop();
 void chip8_draw();
 void chip8_clear();
+int chip8_loadgame();
 
 int main(int argc, char *argv[]) {
     log_info("Booting emulator...");
@@ -48,14 +49,18 @@ int main(int argc, char *argv[]) {
 
     srand(time(NULL));
     chip8_initmem();
-    running = 1;
 
+    if (!chip8_loadgame("pong.ch8"))
+        goto failure;
+
+    running = 1;
     while(running) {
         input_loop();
         chip8_cycle();
         chip8_draw();
     }
 
+failure:
     log_info("Shutting down...");
     if (!destroy_graphics()) {
         log_err("Graphics destruction failed. Exiting");
@@ -116,7 +121,6 @@ void chip8_draw() {
     for (i = 0; i < GFX_MAX; i++) {
         if (gfx[i] != 1)
             continue;
-        log_info("Read 1 value");
         r.x = (i * 10) % WINDOW_WIDTH;
         r.y = (i / (WINDOW_WIDTH / 10)) * 10;
         SDL_RenderFillRect(renderer, &r);
@@ -168,11 +172,13 @@ void chip8_initmem() {
 
     int i;
     for(i = 0x50; i < FONTSET_SIZE + 0x50; i++)
-        memory[i] = chip8_fontset[i];
+        memory[i] = chip8_fontset[i - 0x50];
 }
 
 void chip8_cycle() {
     opcode = (memory[reg_pc] << 8) | memory[reg_pc + 1];
+    if (opcode > 0)
+        log_info("Running op %x", opcode);
     chip8_runop();
     if (delay_timer > 0)
         --delay_timer;
@@ -182,6 +188,25 @@ void chip8_cycle() {
         }
         --sound_timer;
     }
+}
+
+int chip8_loadgame(char *fname) {
+    log_info("Loading game...");
+
+    char c;
+    int i = 0;
+
+    FILE *f = fopen(fname, "rb");
+    check(f != NULL, "");
+    while((c = getc(f)) != EOF && i <= (4096 - 0x200))
+        memory[reg_pc + (i++)] = c;
+    fclose(f);
+
+    log_info("Successfully loaded game \'%s\'.", fname);
+    return 1;
+error:
+    log_info("Failed to load game \'%s\'!", fname);
+    return 0;
 }
 
 void stack_push(unsigned short x) {
@@ -195,11 +220,11 @@ unsigned short stack_pop() {
 }
 
 void opcode0() {
-    if (opcode == 0x00E0) {
+    if (opcode & 0x00E0 == 0xE0) {
         // Clear screen
         chip8_clear();
         reg_pc += 2;
-    } else if (opcode == 0x00EE) {
+    } else if (opcode & 0x00EE == 0xEE) {
         reg_pc = stack_pop();
     } else {
         // Ignored, 0x0nnn
@@ -247,6 +272,68 @@ void opcode7() {
 }
 
 // Arithmetic here:
+void Aopcode0() {
+    regs[(opcode & 0x0F00) >> 8] = regs[(opcode & 0x00F0) >> 4];
+    reg_pc += 2;
+}
+
+void Aopcode1() {
+    regs[(opcode & 0x0F00) >> 8] = regs[(opcode & 0x0F00) >> 8] | regs[(opcode & 0x00F0) >> 4];
+    reg_pc += 2;
+}
+
+void Aopcode2() {
+    regs[(opcode & 0x0F00) >> 8] = regs[(opcode & 0x0F00) >> 8] & regs[(opcode & 0x00F0) >> 4];
+    reg_pc += 2;
+}
+
+void Aopcode3() {
+    regs[(opcode & 0x0F00) >> 8] = regs[(opcode & 0x0F00) >> 8] ^ regs[(opcode & 0x00F0) >> 4];
+    reg_pc += 2;
+}
+
+void Aopcode4() {
+    int res = regs[(opcode & 0x0F00) >> 8] + regs[(opcode & 0x00F0) >> 4];
+    if (res > 255)
+        regs[0xF] = 1;
+    regs[(opcode & 0x0F00) >> 8] = res & 0xFF;
+    reg_pc += 2;
+}
+
+void Aopcode5() {
+    if (regs[(opcode & 0x0F00) >> 8] > regs[(opcode & 0x00F0) >> 4])
+        regs[0xF] = 1;
+    else
+        regs[0xF] = 0;
+    regs[(opcode & 0x0F00) >> 8] = (regs[(opcode & 0x0F00) >> 8] - regs[(opcode & 0x00F0) >> 4]) & 0xFF;
+    reg_pc += 2;
+}
+
+void Aopcode6() {
+    if (regs[(opcode & 0x0F00) >> 8] & 0x1 == 0x1)
+        regs[0xF] = 1;
+    else
+        regs[0xF] = 0;
+    reg_pc += 2;
+}
+
+void Aopcode7() {
+    if (regs[(opcode & 0x00F0) >> 4] > regs[(opcode & 0x0F00) >> 8])
+        regs[0xF] = 1;
+    else
+        regs[0xF] = 0;
+    regs[(opcode & 0x0F00) >> 8] = (regs[(opcode & 0x00F0) >> 4] - regs[(opcode & 0x0F00) >> 8]) & 0xFF;
+    reg_pc += 2;
+}
+
+void AopcodeE() {
+    if (regs[(opcode & 0x0F00) >> 8] & 0x80 == 0x80)
+        regs[0xF] = 1;
+    else
+        regs[0xF] = 0;
+    regs[(opcode & 0x0F00) >> 8] = (regs[(opcode & 0x0F00) >> 8] * 2) & 0xFF;
+    reg_pc += 2;
+}
 
 void opcode9() {
     if (regs[(opcode & 0x0F00) >> 8] != regs[(opcode & 0x00F0) >> 4])
@@ -270,7 +357,25 @@ void opcodeC() {
 }
 
 void opcodeD() {
+    unsigned short x = regs[(opcode & 0x0F00) >> 8];
+    unsigned short y = regs[(opcode & 0x00F0) >> 4];
+    unsigned short height = opcode & 0x000F;
+    unsigned short pixel;
+    int xline, yline;
 
+    regs[0xF] = 0;
+    for (yline = 0; yline < height; yline++) {
+        pixel = memory[reg_i + yline];
+        for(xline = 0; xline < 8; xline++) {
+            if((pixel & (0x80 >> xline)) != 0) {
+                if(gfx[(x + xline + ((y + yline) * 64))] == 1)
+                    regs[0xF] = 1;
+                gfx[x + xline + ((y + yline) * 64)] ^= 1;
+            }
+        }
+    }
+    draw_flag = 1;
+    reg_pc += 2;
 }
 
 void opcodeE() {
@@ -289,7 +394,7 @@ void opcodeF() {
             regs[(opcode & 0x0F00) >> 8] = delay_timer;
             break;
         case 0x000A:
-            while (input_loop() != 1)
+            while (input_loop() != 1 && running == 1)
                 ;
             regs[(opcode & 0x0F00) >> 8] = last_pressed;
             break;
@@ -325,12 +430,13 @@ void opcodeF() {
 // Placeholders
 void cpuNULL() {
     // This should not be called
+    log_warn("Error: cpuNULL being called!");
 }
 
 // Starting with 0x8...
 void (*chip8_arithmetic[16])() =  {
-	cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL,
-	cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL
+	Aopcode0, Aopcode1, Aopcode2, Aopcode3, Aopcode4, Aopcode5, Aopcode6, Aopcode7,
+	cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, cpuNULL, AopcodeE, cpuNULL
 };
 
 void cpuARITHMETIC() {
