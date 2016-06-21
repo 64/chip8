@@ -37,6 +37,7 @@ void chip8_initmem();
 void chip8_runop();
 void chip8_draw();
 void chip8_clear();
+void chip8_debug();
 int chip8_loadgame();
 
 int main(int argc, char *argv[]) {
@@ -53,14 +54,20 @@ int main(int argc, char *argv[]) {
     if (!chip8_loadgame("pong.ch8"))
         goto failure;
 
+    draw_flag = 1;
+
+    log_info("Memory at 746: %x", memory[746]);
+
     running = 1;
     while(running) {
         input_loop();
         chip8_cycle();
         chip8_draw();
+        SDL_Delay(1);
     }
 
 failure:
+    printf("Memory at 746: %x", memory[746]);
     log_info("Shutting down...");
     if (!destroy_graphics()) {
         log_err("Graphics destruction failed. Exiting");
@@ -119,8 +126,7 @@ void chip8_draw() {
     int i;
     SDL_Rect r = { 0, 0, TILE_WIDTH, TILE_HEIGHT };
     for (i = 0; i < GFX_MAX; i++) {
-        if (gfx[i] != 1)
-            continue;
+        (gfx[i] == 1) ? SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255) : SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         r.x = (i * 10) % WINDOW_WIDTH;
         r.y = (i / (WINDOW_WIDTH / 10)) * 10;
         SDL_RenderFillRect(renderer, &r);
@@ -133,7 +139,6 @@ void chip8_clear() {
     int i;
     for (i = 0; i < GFX_MAX; i++)
         gfx[i] = 0;
-    draw_flag = 1;
 }
 
 int destroy_graphics() {
@@ -177,8 +182,6 @@ void chip8_initmem() {
 
 void chip8_cycle() {
     opcode = (memory[reg_pc] << 8) | memory[reg_pc + 1];
-    if (opcode > 0)
-        log_info("Running op %x", opcode);
     chip8_runop();
     if (delay_timer > 0)
         --delay_timer;
@@ -191,15 +194,13 @@ void chip8_cycle() {
 }
 
 int chip8_loadgame(char *fname) {
+    int i, c;
     log_info("Loading game...");
-
-    char c;
-    int i = 0;
 
     FILE *f = fopen(fname, "rb");
     check(f != NULL, "");
-    while((c = getc(f)) != EOF && i <= (4096 - 0x200))
-        memory[reg_pc + (i++)] = c;
+    for (i = reg_pc; (c = getc(f)) != EOF; i++)
+        memory[i] = c;
     fclose(f);
 
     log_info("Successfully loaded game \'%s\'.", fname);
@@ -220,12 +221,12 @@ unsigned short stack_pop() {
 }
 
 void opcode0() {
-    if (opcode & 0x00E0 == 0xE0) {
+    if ((opcode & 0x00FF) == 0xEE) {
+        reg_pc = stack_pop();
+    } else if ((opcode & 0x00F0) == 0xE0) {
         // Clear screen
         chip8_clear();
         reg_pc += 2;
-    } else if (opcode & 0x00EE == 0xEE) {
-        reg_pc = stack_pop();
     } else {
         // Ignored, 0x0nnn
     }
@@ -236,6 +237,7 @@ void opcode1() {
 }
 
 void opcode2() {
+    reg_pc += 2;
     stack_push(reg_pc);
     reg_pc = (opcode & 0x0FFF);
 }
@@ -310,7 +312,7 @@ void Aopcode5() {
 }
 
 void Aopcode6() {
-    if (regs[(opcode & 0x0F00) >> 8] & 0x1 == 0x1)
+    if ((regs[(opcode & 0x0F00) >> 8] & 0x1) == 0x1)
         regs[0xF] = 1;
     else
         regs[0xF] = 0;
@@ -327,7 +329,7 @@ void Aopcode7() {
 }
 
 void AopcodeE() {
-    if (regs[(opcode & 0x0F00) >> 8] & 0x80 == 0x80)
+    if ((regs[(opcode & 0x0F00) >> 8] & 0x80) == 0x80)
         regs[0xF] = 1;
     else
         regs[0xF] = 0;
@@ -452,4 +454,13 @@ void (*chip8_table[17])() = {
 void chip8_runop() {
     // Function pointer table stuff
     chip8_table[(opcode & 0xF000) >> 12]();
+}
+
+void chip8_debug() {
+    int i;
+    log_info("STATE:");
+    printf("REG_I: %d\nREG_PC: %d\nREG_SP: %d\n", reg_i, reg_pc, reg_sp);
+    printf("Registers:\n");
+    for (i = 0; i < 16; i++)
+        printf("\tregs[%x]: %d\n", i, regs[i]);
 }
