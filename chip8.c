@@ -1,5 +1,6 @@
 #include <SDL2/SDL.h>
 #include <stdio.h>
+#include <time.h>
 #include "macros.h"
 
 //OSX: gcc -I/usr/local/include/SDL2 -D_THREAD_SAFE -L/usr/local/lib -lSDL2 chip8.c -o chip8 && ./chip8
@@ -17,14 +18,16 @@ unsigned char gfx[64 * 32];
 unsigned char delay_timer;
 unsigned char sound_timer;
 unsigned short stack[16];
+unsigned char keys[16];
 unsigned short reg_sp;
 unsigned char draw_flag;
 
 short running;
+short last_pressed;
 
 int init_graphics();
 int destroy_graphics();
-void input_loop();
+int input_loop();
 
 void stack_push(unsigned short x);
 unsigned short stack_pop();
@@ -33,6 +36,7 @@ void chip8_cycle();
 void chip8_initmem();
 void chip8_runop();
 void chip8_draw();
+void chip8_clear();
 
 int main(int argc, char *argv[]) {
     log_info("Booting emulator...");
@@ -42,18 +46,17 @@ int main(int argc, char *argv[]) {
     }
     log_info("Graphics successfully initialised.");
 
+    srand(time(NULL));
     chip8_initmem();
-    draw_flag = 1;
     running = 1;
-    gfx[0] = 1;
-    gfx[64] = 1;
-    gfx[2047] = 1;
+
     while(running) {
         input_loop();
         chip8_cycle();
         chip8_draw();
     }
 
+    log_info("Shutting down...");
     if (!destroy_graphics()) {
         log_err("Graphics destruction failed. Exiting");
         return 1;
@@ -82,7 +85,7 @@ error:
     return 0;
 }
 
-void input_loop() {
+int input_loop() {
     SDL_Event ev;
 
     while (SDL_PollEvent(&ev) != 0) {
@@ -90,10 +93,15 @@ void input_loop() {
             case SDL_QUIT:
                 running = 0;
                 break;
-            default:
+            case SDL_KEYDOWN:
+                KEYSWITCH(1);
+                return 1;
+            case SDL_KEYUP:
+                KEYSWITCH(0);
                 break;
         }
     }
+    return 0;
 }
 
 void chip8_draw() {
@@ -117,6 +125,13 @@ void chip8_draw() {
     draw_flag = 0;
 }
 
+void chip8_clear() {
+    int i;
+    for (i = 0; i < GFX_MAX; i++)
+        gfx[i] = 0;
+    draw_flag = 1;
+}
+
 int destroy_graphics() {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -124,7 +139,7 @@ int destroy_graphics() {
     return 1;
 }
 
-unsigned char chip8_fontset[80] = {
+unsigned char chip8_fontset[FONTSET_SIZE] = {
   0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
   0x20, 0x60, 0x20, 0x20, 0x70, // 1
   0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -154,9 +169,6 @@ void chip8_initmem() {
     int i;
     for(i = 0x50; i < FONTSET_SIZE + 0x50; i++)
         memory[i] = chip8_fontset[i];
-
-    memory[reg_pc] = 0xA4;
-    memory[reg_pc + 1] = 0x28;
 }
 
 void chip8_cycle() {
@@ -183,39 +195,64 @@ unsigned short stack_pop() {
 }
 
 void opcode0() {
-
+    if (opcode == 0x00E0) {
+        // Clear screen
+        chip8_clear();
+        reg_pc += 2;
+    } else if (opcode == 0x00EE) {
+        reg_pc = stack_pop();
+    } else {
+        // Ignored, 0x0nnn
+    }
 }
 
 void opcode1() {
-
+    reg_pc = (opcode & 0x0FFF);
 }
 
 void opcode2() {
-
+    stack_push(reg_pc);
+    reg_pc = (opcode & 0x0FFF);
 }
 
 void opcode3() {
-
+    if (regs[(opcode & 0x0F00) >> 8] == (opcode & 0x00FF))
+        reg_pc += 4;
+    else
+        reg_pc += 2;
 }
 
 void opcode4() {
-
+    if (regs[(opcode & 0x0F00) >> 8] != (opcode & 0x00FF))
+        reg_pc += 4;
+    else
+        reg_pc += 2;
 }
 
 void opcode5() {
-
+    if (regs[(opcode & 0x0F00) >> 8] == regs[(opcode & 0x00F0) >> 4])
+        reg_pc += 4;
+    else
+        reg_pc += 2;
 }
 
 void opcode6() {
-
+    regs[(opcode & 0x0F00) >> 8] = opcode & 0x00FF;
+    reg_pc += 2;
 }
 
 void opcode7() {
-
+    regs[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
+    reg_pc += 2;
 }
 
-void opcode9() {
+// Arithmetic here:
 
+void opcode9() {
+    if (regs[(opcode & 0x0F00) >> 8] != regs[(opcode & 0x00F0) >> 4])
+        reg_pc += 4;
+    else
+        reg_pc += 2;
 }
 
 void opcodeA() {
@@ -224,11 +261,12 @@ void opcodeA() {
 }
 
 void opcodeB() {
-
+    reg_pc = (opcode & 0x0FFF) + regs[0];
 }
 
 void opcodeC() {
-
+    regs[(opcode & 0x0F00) >> 8] = rand() & (opcode & 0x00FF);
+    reg_pc += 2;
 }
 
 void opcodeD() {
@@ -236,11 +274,52 @@ void opcodeD() {
 }
 
 void opcodeE() {
-
+    if ((opcode & 0x00FF) == 0x9E && keys[regs[(opcode & 0x0F00) >> 8]] == 1)
+        reg_pc += 4;
+    else if ((opcode & 0x00FF) == 0xA1 && keys[regs[(opcode & 0x0F00) >> 8]] == 0)
+        reg_pc += 4;
+    else
+        reg_pc += 2;
 }
 
 void opcodeF() {
-
+    int i;
+    switch(opcode & 0x00FF) {
+        case 0x0007:
+            regs[(opcode & 0x0F00) >> 8] = delay_timer;
+            break;
+        case 0x000A:
+            while (input_loop() != 1)
+                ;
+            regs[(opcode & 0x0F00) >> 8] = last_pressed;
+            break;
+        case 0x0015:
+            delay_timer = regs[(opcode & 0x0F00) >> 8];
+            break;
+        case 0x0018:
+            sound_timer = regs[(opcode & 0x0F00) >> 8];
+            break;
+        case 0x001E:
+            reg_i += regs[(opcode & 0x0F00) >> 8];
+            break;
+        case 0x0029:
+            reg_i = 0x50 + (regs[(opcode & 0x0F00) >> 8] * FONTSET_HEIGHT);
+            break;
+        case 0x0033:
+            memory[reg_i] = regs[(opcode & 0x0F00) >> 8] % 1000 / 100;
+            memory[reg_i + 1] = regs[(opcode & 0x0F00) >> 8] % 100 / 10;
+            memory[reg_i + 2] = regs[(opcode & 0x0F00) >> 8] % 10;
+            break;
+        case 0x0055:
+            for (i = 0; i < ((opcode & 0x0F00) >> 8); i++)
+                memory[reg_i + i] = regs[i];
+            break;
+        case 0x0065:
+            for (i = 0; i < ((opcode & 0x0F00) >> 8); i++)
+                regs[i] = memory[reg_i + i];
+            break;
+    }
+    reg_pc += 2;
 }
 
 // Placeholders
