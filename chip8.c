@@ -41,6 +41,10 @@ void chip8_debug();
 int chip8_loadgame();
 
 int main(int argc, char *argv[]) {
+    char game_name[100];
+    log_info("Enter the game you would like to load: ");
+    scanf("%s", (char *)&game_name);
+
     log_info("Booting emulator...");
     if (!init_graphics()) {
         log_err("Graphics initialisation failed. Exiting");
@@ -51,12 +55,10 @@ int main(int argc, char *argv[]) {
     srand(time(NULL));
     chip8_initmem();
 
-    if (!chip8_loadgame("pong.ch8"))
+    if (!chip8_loadgame(game_name))
         goto failure;
 
     draw_flag = 1;
-
-    log_info("Memory at 746: %x", memory[746]);
 
     running = 1;
     while(running) {
@@ -67,7 +69,6 @@ int main(int argc, char *argv[]) {
     }
 
 failure:
-    printf("Memory at 746: %x", memory[746]);
     log_info("Shutting down...");
     if (!destroy_graphics()) {
         log_err("Graphics destruction failed. Exiting");
@@ -176,8 +177,8 @@ void chip8_initmem() {
     // All registers and other memory is set to zero as they are globals
 
     int i;
-    for(i = 0x50; i < FONTSET_SIZE + 0x50; i++)
-        memory[i] = chip8_fontset[i - 0x50];
+    for(i = 0; i < FONTSET_SIZE; i++)
+        memory[i] = chip8_fontset[i];
 }
 
 void chip8_cycle() {
@@ -187,7 +188,7 @@ void chip8_cycle() {
         --delay_timer;
     if (sound_timer > 0) {
         if (sound_timer == 1) {
-            // Beep
+            log_info("Beep!");
         }
         --sound_timer;
     }
@@ -269,7 +270,7 @@ void opcode6() {
 }
 
 void opcode7() {
-    regs[(opcode & 0x0F00) >> 8] += opcode & 0x00FF;
+    regs[(opcode & 0x0F00) >> 8] = (regs[(opcode & 0x0F00) >> 8] + (opcode & 0x00FF)) & 0xFF;
     reg_pc += 2;
 }
 
@@ -296,8 +297,10 @@ void Aopcode3() {
 
 void Aopcode4() {
     int res = regs[(opcode & 0x0F00) >> 8] + regs[(opcode & 0x00F0) >> 4];
-    if (res > 255)
+    if (res > 0xFF)
         regs[0xF] = 1;
+    else
+        regs[0xF] = 0;
     regs[(opcode & 0x0F00) >> 8] = res & 0xFF;
     reg_pc += 2;
 }
@@ -312,15 +315,13 @@ void Aopcode5() {
 }
 
 void Aopcode6() {
-    if ((regs[(opcode & 0x0F00) >> 8] & 0x1) == 0x1)
-        regs[0xF] = 1;
-    else
-        regs[0xF] = 0;
+    regs[0xF] = regs[(opcode & 0x0F00) >> 8] & 0x1;
+    regs[(opcode & 0x0F00) >> 8] >>= 1;
     reg_pc += 2;
 }
 
 void Aopcode7() {
-    if (regs[(opcode & 0x00F0) >> 4] > regs[(opcode & 0x0F00) >> 8])
+    if (regs[(opcode & 0x0F00) >> 8] > regs[(opcode & 0x00F0) >> 4])
         regs[0xF] = 1;
     else
         regs[0xF] = 0;
@@ -329,11 +330,8 @@ void Aopcode7() {
 }
 
 void AopcodeE() {
-    if ((regs[(opcode & 0x0F00) >> 8] & 0x80) == 0x80)
-        regs[0xF] = 1;
-    else
-        regs[0xF] = 0;
-    regs[(opcode & 0x0F00) >> 8] = (regs[(opcode & 0x0F00) >> 8] * 2) & 0xFF;
+    regs[0xF] = regs[(opcode & 0x0F00) >> 8] >> 7;
+    regs[(opcode & 0x0F00) >> 8] <<= 1;
     reg_pc += 2;
 }
 
@@ -393,7 +391,7 @@ void opcodeF() {
     int i;
     switch(opcode & 0x00FF) {
         case 0x0007:
-            regs[(opcode & 0x0F00) >> 8] = delay_timer;
+            regs[(opcode & 0x0F00) >> 8] = delay_timer & 0xFF;
             break;
         case 0x000A:
             while (input_loop() != 1 && running == 1)
@@ -407,22 +405,23 @@ void opcodeF() {
             sound_timer = regs[(opcode & 0x0F00) >> 8];
             break;
         case 0x001E:
-            reg_i += regs[(opcode & 0x0F00) >> 8];
+            reg_i = (reg_i + regs[(opcode & 0x0F00) >> 8]) & 0xFFF;
             break;
         case 0x0029:
-            reg_i = 0x50 + (regs[(opcode & 0x0F00) >> 8] * FONTSET_HEIGHT);
+            reg_i = (regs[(opcode & 0x0F00) >> 8] * FONTSET_HEIGHT);
             break;
         case 0x0033:
-            memory[reg_i] = regs[(opcode & 0x0F00) >> 8] % 1000 / 100;
-            memory[reg_i + 1] = regs[(opcode & 0x0F00) >> 8] % 100 / 10;
-            memory[reg_i + 2] = regs[(opcode & 0x0F00) >> 8] % 10;
+            memory[reg_i] = (regs[(opcode & 0x0F00 >> 8)] / 100) | 0;
+            memory[reg_i + 1] = ((regs[(opcode & 0x0F00) >> 8] - memory[reg_i] * 100) / 10) | 0;
+            memory[reg_i + 2] = ((regs[(opcode & 0x0F00) >> 8] - memory[reg_i] * 100) - memory[reg_i + 1] * 10) | 0;
+
             break;
         case 0x0055:
-            for (i = 0; i < ((opcode & 0x0F00) >> 8); i++)
+            for (i = 0; i <= ((opcode & 0x0F00) >> 8); i++)
                 memory[reg_i + i] = regs[i];
             break;
         case 0x0065:
-            for (i = 0; i < ((opcode & 0x0F00) >> 8); i++)
+            for (i = 0; i <= ((opcode & 0x0F00) >> 8); i++)
                 regs[i] = memory[reg_i + i];
             break;
     }
