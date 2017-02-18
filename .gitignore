@@ -1,3 +1,5 @@
+./chip8
+
 # Object files
 *.o
 *.ko
