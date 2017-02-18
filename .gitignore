@@ -1,4 +1,5 @@
 ./chip8
+.DS_Store
 
 # Object files
 *.o
